@@ -2,6 +2,7 @@ const express = require("express");
 const cors    = require("cors");
 const path    = require("path");
 const { query } = require("./db");
+const seed    = require("./seed");
 require("dotenv").config();
 
 const app  = express();
@@ -139,4 +140,6 @@ if (PROD) {
 }
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Server → http://localhost:${PORT} [${PROD ? "production" : "development"}]`));
+seed().then(() => {
+  app.listen(PORT, () => console.log(`Server → http://localhost:${PORT} [${PROD ? "production" : "development"}]`));
+});
