@@ -5,3 +5,5 @@ dist
 Comments.docx
 /GlowingFireFlies.mp4
 .claude/
+server/.env
+server/node_modules

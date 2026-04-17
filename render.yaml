@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: bluebells-app
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build && cd server && npm install
+    startCommand: cd server && node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bluebells-db
+          property: connectionString
+
+databases:
+  - name: bluebells-db
+    plan: free
+    databaseName: student_tracker

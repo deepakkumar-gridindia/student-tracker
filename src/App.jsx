@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 
-// ─── Mock Data ────────────────────────────────────────────────────────────────
+const API = "";
+
+// ─── Fallback / seed data (used when API is unreachable) ─────────────────────
 const SCHOOLS = [
   { id: "s1", name: "Delhi Public School", code: "DPS2024", password: "dps123" },
   { id: "s2", name: "Kendriya Vidyalaya", code: "KV2024", password: "kv123" },
@@ -163,7 +165,10 @@ export default function SchoolApp() {
   const [screen, setScreen] = useState(() => ls("screen", "login"));
   const [user, setUser] = useState(() => ls("user", null));
   const [students, setStudents] = useState(STUDENTS_INIT);
-  const [parents] = useState(PARENTS_INIT);
+  const [parents, setParents]   = useState(PARENTS_INIT);
+  const [teachers, setTeachers] = useState(TEACHERS);
+  const [classes, setClasses]   = useState(CLASSES);
+  const [staff, setStaff]       = useState(STAFF_INIT);
   const [attendance, setAttendance] = useState(() => ls("att", {}));
   const [messages, setMessages] = useState(() => ls("msgs", {}));
   const [notifications, setNotifications] = useState(() => ls("notifs", []));
@@ -196,6 +201,34 @@ export default function SchoolApp() {
     window.addEventListener("storage", handler);
     return () => window.removeEventListener("storage", handler);
   }, []);
+
+  // Fetch reference data from MySQL via API (falls back to hardcoded if unavailable)
+  useEffect(() => {
+    fetch(`${API}/api/data`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.teachers?.length) setTeachers(d.teachers);
+        if (d.staff?.length)    setStaff(d.staff);
+        if (d.students?.length) setStudents(d.students);
+        if (d.parents?.length)  setParents(d.parents);
+        if (d.classes?.length)  setClasses(d.classes);
+      })
+      .catch(() => {});
+  }, []);
+
+  // API login — falls back to local data check if server unreachable
+  const apiLogin = async (role, id, password) => {
+    try {
+      const res  = await fetch(`${API}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, id, password }),
+      });
+      return await res.json();
+    } catch {
+      return { success: false, error: "server_unavailable" };
+    }
+  };
 
   const handleLogin = (role, data) => { setUser({ role, ...data }); setScreen(role); };
   const handleLogout = () => { setUser(null); setScreen("login"); localStorage.removeItem("user"); localStorage.setItem("screen", JSON.stringify("login")); };
@@ -279,9 +312,10 @@ export default function SchoolApp() {
   const todayStaffRecord = (staffId) => staffAttendance[today()]?.[staffId] || null;
   const todayRecord = (studentId) => attendance[today()]?.[studentId] || null;
 
-  if (screen === "login") return <LoginScreen onLogin={handleLogin} />;
+  if (screen === "login") return <LoginScreen onLogin={handleLogin} apiLogin={apiLogin}
+    teachers={teachers} staff={staff} parents={parents} schools={SCHOOLS} />;
   if (screen === "teacher") return (
-    <TeacherApp user={user} students={students} setStudents={setStudents} classes={CLASSES}
+    <TeacherApp user={user} students={students} setStudents={setStudents} classes={classes}
       parents={parents} messages={messages} notifications={notifications} setNotifications={setNotifications}
       markAttendance={markAttendance} addRemark={addRemark} todayRecord={todayRecord}
       saveAttendance={saveAttendance} savedDates={savedDates}
@@ -292,12 +326,16 @@ export default function SchoolApp() {
   if (screen === "parent") return (
     <ParentApp user={user} students={students} messages={messages}
       notifications={notifications} todayRecord={todayRecord}
-      sendMessage={sendMessage} classImages={classImages} classes={CLASSES}
+      sendMessage={sendMessage} classImages={classImages} classes={classes}
       onLogout={handleLogout} />
   );
   if (screen === "school") return (
-    <SchoolAdminApp user={user} students={students} classes={CLASSES}
-      teachers={TEACHERS} staff={STAFF_INIT}
+    <SchoolAdminApp user={user}
+      students={students} setStudents={setStudents}
+      classes={classes}   setClasses={setClasses}
+      teachers={teachers} setTeachers={setTeachers}
+      staff={staff}       setStaff={setStaff}
+      parents={parents}   setParents={setParents}
       attendance={attendance} staffAttendance={staffAttendance}
       savedDates={savedDates} todayRecord={todayRecord} todayStaffRecord={todayStaffRecord}
       onLogout={handleLogout} />
@@ -305,38 +343,52 @@ export default function SchoolApp() {
 }
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }) {
-  const [tab, setTab] = useState("teacher"); // teacher | parent | school
+function LoginScreen({ onLogin, apiLogin, teachers, staff, parents, schools }) {
+  const [tab, setTab] = useState("teacher");
   const [form, setForm] = useState({ code: "", password: "" });
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = () => {
-    setErr("");
-    if (tab === "teacher") {
-      const t = TEACHERS.find(t => t.id === form.code && t.password === form.password);
-      if (t) { onLogin("teacher", t); return; }
-      setErr("Invalid teacher ID or password. Try: t1 / teacher1");
-    } else if (tab === "staff") {
-      const sf = STAFF_INIT.find(s => s.id === form.code && s.password === form.password);
-      if (sf) { onLogin("teacher", { ...sf, isStaff: true }); return; }
-      setErr("Invalid staff ID or password. Try: sf1 / staff1");
-    } else if (tab === "parent") {
-      const p = PARENTS_INIT.find(p => p.id === form.code && p.password === form.password);
-      if (p) { onLogin("parent", p); return; }
-      setErr("Invalid parent ID or password. Try: p1 / parent1");
-    } else {
-      const s = SCHOOLS.find(s => s.code === form.code && s.password === form.password);
-      if (s) { onLogin("school", s); return; }
-      setErr("Invalid school code or password. Try: DPS2024 / dps123");
+  const handleSubmit = async () => {
+    setErr(""); setLoading(true);
+    const { code, password } = form;
+
+    // Try API first
+    const apiRole = tab === "staff" ? "teacher" : tab;
+    const result = await apiLogin(apiRole, code, password);
+
+    if (result.success) {
+      setLoading(false);
+      onLogin(apiRole, result.user);
+      return;
     }
-  };
 
+    // API unavailable — fall back to local data
+    if (result.error === "server_unavailable") {
+      if (tab === "teacher") {
+        const t = teachers.find(t => t.id === code && t.password === password);
+        if (t) { setLoading(false); onLogin("teacher", t); return; }
+      } else if (tab === "staff") {
+        const sf = staff.find(s => s.id === code && s.password === password);
+        if (sf) { setLoading(false); onLogin("teacher", { ...sf, isStaff: true }); return; }
+      } else if (tab === "parent") {
+        const p = parents.find(p => p.id === code && p.password === password);
+        if (p) { setLoading(false); onLogin("parent", p); return; }
+      } else {
+        const s = schools.find(s => s.code === code && s.password === password);
+        if (s) { setLoading(false); onLogin("school", s); return; }
+      }
+    }
+
+    setLoading(false);
+    setErr(result.error && result.error !== "server_unavailable" ? result.error : "Invalid credentials");
+  };
 
   const demos = {
     teacher: ["ID: GSood", "Pass: GSood"],
     staff:   ["ID: sf1", "Pass: staff1"],
     parent:  ["ID: Agastya Kashyap_Parent", "Pass: Student@2026"],
-    school:  ["Code: DPS2024", "Pass: dps123"]
+    school:  ["Code: BIS2024", "Pass: admin123"]
   };
 
   return (
@@ -387,9 +439,9 @@ function LoginScreen({ onLogin }) {
             <p style={{ color: "#a5b4fc", fontSize: 11, margin: 0 }}>Demo: {demos[tab][0]} &nbsp;|&nbsp; {demos[tab][1]}</p>
           </div>
 
-          <button onClick={handleSubmit}
-            style={{ width: "100%", padding: "14px", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none", borderRadius: 12, color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer", letterSpacing: 0.3 }}>
-            Sign In →
+          <button onClick={handleSubmit} disabled={loading}
+            style={{ width: "100%", padding: "14px", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", border: "none", borderRadius: 12, color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "wait" : "pointer", letterSpacing: 0.3, opacity: loading ? 0.7 : 1 }}>
+            {loading ? "Signing in…" : "Sign In →"}
           </button>
         </div>
       </div>
@@ -1880,9 +1932,238 @@ function SelfAttendancePage({ user, todayStaffRecord, markStaffAttendance, staff
   );
 }
 
+// ─── MANAGE PANEL (Admin CRUD) ────────────────────────────────────────────────
+function ManagePanel({ schoolId, students, setStudents, classes, setClasses, teachers, setTeachers, staff, setStaff, parents, setParents }) {
+  const [entity, setEntity] = useState("teachers");
+  const [modal, setModal]   = useState(null); // null | { mode:"add"|"edit", data:{} }
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg]       = useState("");
+
+  const inp = (style = {}) => ({
+    width: "100%", padding: "10px 12px", background: "rgba(255,255,255,0.07)",
+    border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, color: "#fff",
+    fontSize: 13, outline: "none", boxSizing: "border-box", ...style,
+  });
+  const lbl = { color: "#94a3b8", fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4, marginTop: 10 };
+
+  const flash = (m) => { setMsg(m); setTimeout(() => setMsg(""), 3000); };
+
+  // ── SAVE (add or edit) ──────────────────────────────────────────────────────
+  const handleSave = async () => {
+    if (!modal) return;
+    setSaving(true);
+    const { mode, data } = modal;
+    const isEdit = mode === "edit";
+    const url  = `${API}/api/admin/${entity}${isEdit ? "/" + data.id : ""}`;
+    const method = isEdit ? "PUT" : "POST";
+
+    try {
+      const res  = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+
+      // Update local state
+      const record = json.data;
+      if (entity === "teachers") setTeachers(prev => isEdit ? prev.map(r => r.id === record.id ? record : r) : [...prev, record]);
+      if (entity === "staff")    setStaff(prev    => isEdit ? prev.map(r => r.id === record.id ? record : r) : [...prev, record]);
+      if (entity === "students") setStudents(prev => isEdit ? prev.map(r => r.id === record.id ? record : r) : [...prev, record]);
+      if (entity === "parents")  setParents(prev  => isEdit ? prev.map(r => r.id === record.id ? record : r) : [...prev, record]);
+      if (entity === "classes")  setClasses(prev  => isEdit ? prev.map(r => r.id === record.id ? record : r) : [...prev, record]);
+
+      flash(isEdit ? "Updated successfully ✓" : "Added successfully ✓");
+      setModal(null);
+    } catch (e) {
+      flash("Error: " + e.message);
+    } finally { setSaving(false); }
+  };
+
+  // ── DELETE ──────────────────────────────────────────────────────────────────
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this record? This cannot be undone.")) return;
+    try {
+      const res  = await fetch(`${API}/api/admin/${entity}/${id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      if (entity === "teachers") setTeachers(prev => prev.filter(r => r.id !== id));
+      if (entity === "staff")    setStaff(prev    => prev.filter(r => r.id !== id));
+      if (entity === "students") setStudents(prev => prev.filter(r => r.id !== id));
+      if (entity === "parents")  setParents(prev  => prev.filter(r => r.id !== id));
+      if (entity === "classes")  setClasses(prev  => prev.filter(r => r.id !== id));
+      flash("Deleted ✓");
+    } catch (e) { flash("Error: " + e.message); }
+  };
+
+  // ── Default empty forms ─────────────────────────────────────────────────────
+  const emptyForm = {
+    teachers: { id: "", name: "", subject: "", classId: "", schoolId, password: "" },
+    staff:    { id: "", name: "", role: "", dept: "", schoolId, password: "" },
+    students: { id: "", name: "", rollNo: "", classId: "", schoolId, parentId: "" },
+    parents:  { id: "", name: "", studentId: "", phone: "", password: "" },
+    classes:  { id: "", name: "", grade: "", section: "", schoolId, teacherId: "" },
+  };
+
+  // ── Current records list ─────────────────────────────────────────────────────
+  const records = {
+    teachers: teachers.filter(t => t.schoolId === schoolId),
+    staff:    staff.filter(s => s.schoolId === schoolId),
+    students: students.filter(s => s.schoolId === schoolId),
+    parents,
+    classes:  classes.filter(c => c.schoolId === schoolId),
+  }[entity];
+
+  // ── Column definitions ───────────────────────────────────────────────────────
+  const cols = {
+    teachers: ["id", "name", "subject", "classId", "password"],
+    staff:    ["id", "name", "role", "dept", "password"],
+    students: ["id", "name", "rollNo", "classId", "parentId"],
+    parents:  ["id", "name", "studentId", "phone", "password"],
+    classes:  ["id", "name", "grade", "section", "teacherId"],
+  }[entity];
+
+  // ── Modal form fields ────────────────────────────────────────────────────────
+  const renderFields = () => {
+    const d = modal?.data || {};
+    const set = (k, v) => setModal(m => ({ ...m, data: { ...m.data, [k]: v } }));
+    const isEdit = modal?.mode === "edit";
+
+    const Field = ({ label, k, type = "text", placeholder = "" }) => (
+      <div>
+        <label style={lbl}>{label}</label>
+        <input type={type} value={d[k] || ""} onChange={e => set(k, e.target.value)}
+          placeholder={placeholder} style={inp()} disabled={isEdit && k === "id"} />
+      </div>
+    );
+    const Select = ({ label, k, options }) => (
+      <div>
+        <label style={lbl}>{label}</label>
+        <select value={d[k] || ""} onChange={e => set(k, e.target.value)}
+          style={{ ...inp(), appearance: "none" }}>
+          <option value="">— none —</option>
+          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+    );
+
+    if (entity === "teachers") return <>
+      <Field label="LOGIN ID *" k="id" placeholder="e.g. GSood" />
+      <Field label="FULL NAME *" k="name" />
+      <Field label="SUBJECT" k="subject" placeholder="e.g. Mathematics" />
+      <Select label="ASSIGNED CLASS" k="classId" options={classes.filter(c => c.schoolId === schoolId).map(c => ({ value: c.id, label: c.name }))} />
+      <Field label="PASSWORD *" k="password" type="password" />
+    </>;
+    if (entity === "staff") return <>
+      <Field label="LOGIN ID *" k="id" placeholder="e.g. sf7" />
+      <Field label="FULL NAME *" k="name" />
+      <Field label="ROLE / DESIGNATION" k="role" placeholder="e.g. Librarian" />
+      <Field label="DEPARTMENT" k="dept" placeholder="e.g. Administration" />
+      <Field label="PASSWORD *" k="password" type="password" />
+    </>;
+    if (entity === "students") return <>
+      <Field label="STUDENT ID *" k="id" placeholder="e.g. st25" />
+      <Field label="FULL NAME *" k="name" />
+      <Field label="ROLL NUMBER" k="rollNo" placeholder="e.g. 25" />
+      <Select label="CLASS *" k="classId" options={classes.filter(c => c.schoolId === schoolId).map(c => ({ value: c.id, label: c.name }))} />
+      <Select label="LINKED PARENT" k="parentId" options={parents.map(p => ({ value: p.id, label: `${p.name} (${p.id})` }))} />
+    </>;
+    if (entity === "parents") return <>
+      <Field label="LOGIN ID *" k="id" placeholder="e.g. StudentName_Parent" />
+      <Field label="FULL NAME *" k="name" />
+      <Field label="PHONE" k="phone" placeholder="e.g. 9876543210" />
+      <Select label="LINKED STUDENT" k="studentId" options={students.filter(s => s.schoolId === schoolId).map(s => ({ value: s.id, label: `${s.name} (${s.id})` }))} />
+      <Field label="PASSWORD *" k="password" type="password" />
+    </>;
+    if (entity === "classes") return <>
+      <Field label="CLASS ID *" k="id" placeholder="e.g. c3" />
+      <Field label="CLASS NAME *" k="name" placeholder="e.g. Class 5A" />
+      <Field label="GRADE" k="grade" placeholder="e.g. 5" />
+      <Field label="SECTION" k="section" placeholder="e.g. A" />
+      <Select label="CLASS TEACHER" k="teacherId" options={teachers.filter(t => t.schoolId === schoolId).map(t => ({ value: t.id, label: t.name }))} />
+    </>;
+    return null;
+  };
+
+  const entityLabels = { teachers: "Teachers", staff: "Staff", students: "Students", parents: "Parents", classes: "Classes" };
+  const btnStyle = (active) => ({
+    padding: "8px 16px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+    background: active ? "rgba(245,158,11,0.25)" : "rgba(255,255,255,0.06)",
+    color: active ? "#fbbf24" : "#94a3b8",
+  });
+
+  return (
+    <div>
+      <h2 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 800 }}>Manage School Data</h2>
+      <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 16px" }}>Add, edit, or remove teachers, students, parents, staff and classes</p>
+
+      {msg && <div style={{ background: msg.startsWith("Error") ? "rgba(239,68,68,0.15)" : "rgba(34,197,94,0.15)", border: `1px solid ${msg.startsWith("Error") ? "rgba(239,68,68,0.4)" : "rgba(34,197,94,0.3)"}`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: msg.startsWith("Error") ? "#fca5a5" : "#86efac" }}>{msg}</div>}
+
+      {/* Entity tabs */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+        {["teachers", "staff", "students", "parents", "classes"].map(e => (
+          <button key={e} style={btnStyle(entity === e)} onClick={() => setEntity(e)}>
+            {entityLabels[e]}
+          </button>
+        ))}
+      </div>
+
+      {/* Add button */}
+      <button onClick={() => setModal({ mode: "add", data: { ...emptyForm[entity] } })}
+        style={{ marginBottom: 14, padding: "9px 18px", background: "rgba(245,158,11,0.2)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 10, color: "#fbbf24", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+        + Add {entityLabels[entity].slice(0, -1)}
+      </button>
+
+      {/* Records table */}
+      {records.length === 0 ? (
+        <div style={{ textAlign: "center", color: "#475569", padding: 40, fontSize: 13 }}>No {entityLabels[entity].toLowerCase()} found</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {records.map(r => (
+            <div key={r.id} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{r.name}</div>
+                <div style={{ color: "#64748b", fontSize: 11 }}>
+                  {cols.filter(k => k !== "name" && k !== "password").map(k => r[k] ? `${k}: ${r[k]}` : null).filter(Boolean).join("  ·  ")}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button onClick={() => setModal({ mode: "edit", data: { ...r } })}
+                  style={{ padding: "5px 12px", background: "rgba(99,102,241,0.2)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 8, color: "#a5b4fc", cursor: "pointer", fontSize: 12 }}>Edit</button>
+                <button onClick={() => handleDelete(r.id)}
+                  style={{ padding: "5px 12px", background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, color: "#fca5a5", cursor: "pointer", fontSize: 12 }}>Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Modal */}
+      {modal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+          onClick={() => setModal(null)}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: "#1e293b", borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 500, maxHeight: "85vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>{modal.mode === "add" ? "Add" : "Edit"} {entityLabels[entity].slice(0, -1)}</h3>
+              <button onClick={() => setModal(null)} style={{ background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer" }}>✕</button>
+            </div>
+            {renderFields()}
+            <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
+              <button onClick={handleSave} disabled={saving}
+                style={{ flex: 1, padding: 13, background: "linear-gradient(135deg,#f59e0b,#d97706)", border: "none", borderRadius: 12, color: "#fff", fontWeight: 700, fontSize: 14, cursor: saving ? "wait" : "pointer", opacity: saving ? 0.7 : 1 }}>
+                {saving ? "Saving…" : modal.mode === "add" ? "Add Record" : "Save Changes"}
+              </button>
+              <button onClick={() => setModal(null)}
+                style={{ padding: "13px 20px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#94a3b8", cursor: "pointer", fontSize: 14 }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SCHOOL ADMIN APP ─────────────────────────────────────────────────────────
-function SchoolAdminApp({ user, students, classes, teachers, staff, attendance, staffAttendance, savedDates, todayRecord, todayStaffRecord, onLogout }) {
-  const [tab, setTab] = useState("overview"); // overview | classes | staff | teachers
+function SchoolAdminApp({ user, students, setStudents, classes, setClasses, teachers, setTeachers, staff, setStaff, parents, setParents, attendance, staffAttendance, savedDates, todayRecord, todayStaffRecord, onLogout }) {
+  const [tab, setTab] = useState("overview"); // overview | classes | teachers | staff | manage
 
   const d = today();
   const schoolClasses = classes.filter(c => c.schoolId === user.id);
@@ -1916,9 +2197,10 @@ function SchoolAdminApp({ user, students, classes, teachers, staff, attendance, 
 
   const tabs = [
     { id: "overview", label: "Overview", icon: "🏠" },
-    { id: "classes", label: "Classes", icon: "📋" },
+    { id: "classes",  label: "Classes",  icon: "📋" },
     { id: "teachers", label: "Teachers", icon: "👩‍🏫" },
-    { id: "staff", label: "Staff", icon: "🧑‍💼" },
+    { id: "staff",    label: "Staff",    icon: "🧑‍💼" },
+    { id: "manage",   label: "Manage",   icon: "⚙️" },
   ];
 
   return (
@@ -2146,15 +2428,27 @@ function SchoolAdminApp({ user, students, classes, teachers, staff, attendance, 
           </div>
         )}
 
+        {/* ── MANAGE TAB ── */}
+        {tab === "manage" && (
+          <ManagePanel
+            schoolId={user.id}
+            students={students} setStudents={setStudents}
+            classes={classes}   setClasses={setClasses}
+            teachers={teachers} setTeachers={setTeachers}
+            staff={staff}       setStaff={setStaff}
+            parents={parents}   setParents={setParents}
+          />
+        )}
+
       </div>
 
       {/* Bottom Nav */}
       <div style={{ background: "rgba(15,23,42,0.95)", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", padding: "8px 0" }}>
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            style={{ flex: 1, border: "none", background: "none", cursor: "pointer", padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, color: tab === t.id ? "#f59e0b" : "#475569" }}>
-            <span style={{ fontSize: 18 }}>{t.icon}</span>
-            <span style={{ fontSize: 10, fontWeight: tab === t.id ? 700 : 400 }}>{t.label}</span>
+            style={{ flex: 1, border: "none", background: "none", cursor: "pointer", padding: "6px 2px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, color: tab === t.id ? "#f59e0b" : "#475569" }}>
+            <span style={{ fontSize: 16 }}>{t.icon}</span>
+            <span style={{ fontSize: 9, fontWeight: tab === t.id ? 700 : 400 }}>{t.label}</span>
           </button>
         ))}
       </div>
