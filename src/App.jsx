@@ -157,6 +157,27 @@ const MiniBar = ({ value, max = 100, color }) => (
   </div>
 );
 
+// ─── FOOTER ───────────────────────────────────────────────────────────────────
+function AppFooter({ dark = true }) {
+  return (
+    <div style={{
+      textAlign: "center", padding: "6px 12px",
+      background: dark ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.06)",
+      borderTop: dark ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(255,255,255,0.06)",
+    }}>
+      <span style={{
+        fontSize: 11, fontWeight: 600, letterSpacing: 0.4,
+        background: "linear-gradient(90deg, #a78bfa, #38bdf8, #a78bfa)",
+        WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+        backgroundSize: "200% auto", animation: "shimmer 3s linear infinite",
+      }}>
+        ✦ An Initiative by Deepshi's Proud Parents ✦
+      </span>
+      <style>{`@keyframes shimmer { to { background-position: 200% center; } }`}</style>
+    </div>
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function SchoolApp() {
   const ls = (key, fallback) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } };
@@ -433,6 +454,7 @@ function LoginScreen({ onLogin, apiLogin, teachers, staff, parents, schools }) {
             {loading ? "Signing in…" : "Sign In →"}
           </button>
         </div>
+        <div style={{ marginTop: 20 }}><AppFooter dark={false} /></div>
       </div>
     </div>
   );
@@ -507,18 +529,21 @@ function TeacherApp({ user, students, setStudents, classes, parents, messages, n
       </div>
 
       {/* Bottom Nav */}
-      <div style={{ background: "rgba(15,23,42,0.95)", backdropFilter: "blur(10px)", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", padding: "8px 0" }}>
-        {tabs.map(t => {
-          const iconMap = { dashboard:"🏠", attendance:"✅", students:"📋", chat:"💬", gallery:"📷", myattendance:"🕐" };
-          return (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ flex: 1, border: "none", background: "none", cursor: "pointer", padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                color: tab === t.id ? "#818cf8" : "#475569" }}>
-              <span style={{ fontSize: 18 }}>{iconMap[t.id] || "•"}</span>
-              <span style={{ fontSize: 10, fontWeight: tab === t.id ? 700 : 400 }}>{t.label}</span>
-            </button>
-          );
-        })}
+      <div style={{ background: "rgba(15,23,42,0.95)", backdropFilter: "blur(10px)", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+        <div style={{ display: "flex", padding: "8px 0" }}>
+          {tabs.map(t => {
+            const iconMap = { dashboard:"🏠", attendance:"✅", students:"📋", chat:"💬", gallery:"📷", myattendance:"🕐" };
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                style={{ flex: 1, border: "none", background: "none", cursor: "pointer", padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                  color: tab === t.id ? "#818cf8" : "#475569" }}>
+                <span style={{ fontSize: 18 }}>{iconMap[t.id] || "•"}</span>
+                <span style={{ fontSize: 10, fontWeight: tab === t.id ? 700 : 400 }}>{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <AppFooter />
       </div>
     </div>
   );
@@ -1786,15 +1811,18 @@ function ParentApp({ user, students, messages, notifications, todayRecord, sendM
       </div>
 
       {/* Bottom Nav */}
-      <div style={{ background: "rgba(15,23,42,0.95)", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", padding: "8px 0" }}>
-        {[["home", "🏠", "Home"], ["gallery", "🖼️", "Gallery"], ["chat", "💬", "Chat"]].map(([t, icon, label]) => (
-          <button key={t} onClick={() => setTab(t)}
-            style={{ flex: 1, border: "none", background: "none", cursor: "pointer", padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-              color: tab === t ? "#10b981" : "#475569" }}>
-            <span style={{ fontSize: 20 }}>{icon}</span>
-            <span style={{ fontSize: 11, fontWeight: tab === t ? 700 : 400 }}>{label}</span>
-          </button>
-        ))}
+      <div style={{ background: "rgba(15,23,42,0.95)", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+        <div style={{ display: "flex", padding: "8px 0" }}>
+          {[["home", "🏠", "Home"], ["gallery", "🖼️", "Gallery"], ["chat", "💬", "Chat"]].map(([t, icon, label]) => (
+            <button key={t} onClick={() => setTab(t)}
+              style={{ flex: 1, border: "none", background: "none", cursor: "pointer", padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                color: tab === t ? "#10b981" : "#475569" }}>
+              <span style={{ fontSize: 20 }}>{icon}</span>
+              <span style={{ fontSize: 11, fontWeight: tab === t ? 700 : 400 }}>{label}</span>
+            </button>
+          ))}
+        </div>
+        <AppFooter />
       </div>
     </div>
   );
@@ -2431,14 +2459,17 @@ function SchoolAdminApp({ user, students, setStudents, classes, setClasses, teac
       </div>
 
       {/* Bottom Nav */}
-      <div style={{ background: "rgba(15,23,42,0.95)", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", padding: "8px 0" }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            style={{ flex: 1, border: "none", background: "none", cursor: "pointer", padding: "6px 2px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, color: tab === t.id ? "#f59e0b" : "#475569" }}>
-            <span style={{ fontSize: 16 }}>{t.icon}</span>
-            <span style={{ fontSize: 9, fontWeight: tab === t.id ? 700 : 400 }}>{t.label}</span>
-          </button>
-        ))}
+      <div style={{ background: "rgba(15,23,42,0.95)", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+        <div style={{ display: "flex", padding: "8px 0" }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              style={{ flex: 1, border: "none", background: "none", cursor: "pointer", padding: "6px 2px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, color: tab === t.id ? "#f59e0b" : "#475569" }}>
+              <span style={{ fontSize: 16 }}>{t.icon}</span>
+              <span style={{ fontSize: 9, fontWeight: tab === t.id ? 700 : 400 }}>{t.label}</span>
+            </button>
+          ))}
+        </div>
+        <AppFooter />
       </div>
     </div>
   );
