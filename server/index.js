@@ -212,6 +212,18 @@ app.post("/api/saved-dates", async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// Reset attendance for a list of students on a date, and remove the saved-date entry
+app.post("/api/attendance/reset", async (req, res) => {
+  const { date, studentIds } = req.body;
+  try {
+    for (const sid of studentIds) {
+      await query("DELETE FROM attendance WHERE student_id=? AND date=?", [sid, date]);
+    }
+    await query("DELETE FROM saved_dates WHERE date=?", [date]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
 app.get("/api/notifications", async (_, res) => {
   try {

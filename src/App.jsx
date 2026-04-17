@@ -291,6 +291,20 @@ export default function SchoolApp() {
     post("/api/notifications", newNotifs);
   };
 
+  const resetAttendance = (classStudents) => {
+    const d = today();
+    setAttendance(prev => {
+      const next = { ...prev };
+      if (next[d]) {
+        next[d] = { ...next[d] };
+        classStudents.forEach(s => { delete next[d][s.id]; });
+      }
+      return next;
+    });
+    setSavedDates(prev => { const next = { ...prev }; delete next[d]; return next; });
+    post("/api/attendance/reset", { date: d, studentIds: classStudents.map(s => s.id) });
+  };
+
   const sendMessage = (studentId, from, text, image = null) => {
     const t = now(); const d = today();
     const msg = { from, text, time: t, image, date: d };
@@ -328,7 +342,7 @@ export default function SchoolApp() {
     <TeacherApp user={user} students={students} setStudents={setStudents} classes={classes}
       parents={parents} messages={messages} notifications={notifications} setNotifications={setNotifications}
       markAttendance={markAttendance} addRemark={addRemark} todayRecord={todayRecord}
-      saveAttendance={saveAttendance} savedDates={savedDates}
+      saveAttendance={saveAttendance} resetAttendance={resetAttendance} savedDates={savedDates}
       sendMessage={sendMessage} classImages={classImages} setClassImages={setClassImages} addClassImage={addClassImage}
       staffAttendance={staffAttendance} markStaffAttendance={markStaffAttendance} todayStaffRecord={todayStaffRecord}
       onLogout={handleLogout} />
@@ -461,7 +475,7 @@ function LoginScreen({ onLogin, apiLogin, teachers, staff, parents, schools }) {
 }
 
 // ─── TEACHER APP ──────────────────────────────────────────────────────────────
-function TeacherApp({ user, students, setStudents, classes, parents, messages, notifications, setNotifications, markAttendance, addRemark, todayRecord, saveAttendance, savedDates, staffAttendance, markStaffAttendance, todayStaffRecord, sendMessage, classImages, setClassImages, onLogout }) {
+function TeacherApp({ user, students, setStudents, classes, parents, messages, notifications, setNotifications, markAttendance, addRemark, todayRecord, saveAttendance, resetAttendance, savedDates, staffAttendance, markStaffAttendance, todayStaffRecord, sendMessage, classImages, setClassImages, onLogout }) {
   const [tab, setTab] = useState("dashboard"); // dashboard | attendance | students | student | chat | gallery
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -521,7 +535,7 @@ function TeacherApp({ user, students, setStudents, classes, parents, messages, n
       <div style={{ flex: 1, overflow: "auto", padding: "20px 16px" }}>
         {tab === "myattendance" && <SelfAttendancePage user={user} todayStaffRecord={todayStaffRecord} markStaffAttendance={markStaffAttendance} staffAttendance={staffAttendance} isTeacher={!isStaff} />}
         {tab === "dashboard" && !isStaff && <TeacherDashboard myStudents={myStudents} myClass={myClass} todayRecord={todayRecord} viewStudent={viewStudent} notifications={notifications} />}
-        {tab === "attendance" && !isStaff && <AttendancePage myStudents={myStudents} todayRecord={todayRecord} markAttendance={markAttendance} addRemark={addRemark} saveAttendance={saveAttendance} savedDates={savedDates} user={user} />}
+        {tab === "attendance" && !isStaff && <AttendancePage myStudents={myStudents} todayRecord={todayRecord} markAttendance={markAttendance} addRemark={addRemark} saveAttendance={saveAttendance} resetAttendance={resetAttendance} savedDates={savedDates} user={user} />}
         {tab === "students" && !isStaff && <AllStudentsPage myStudents={myStudents} todayRecord={todayRecord} viewStudent={viewStudent} />}
         {tab === "student" && selectedStudent && !isStaff && <StudentDetailPage student={selectedStudent} todayRecord={todayRecord} messages={messages[selectedStudent.id] || []} sendMessage={sendMessage} onBack={() => setTab("students")} user={user} savedDates={savedDates} markAttendance={markAttendance} setNotifications={setNotifications} />}
         {tab === "chat" && !isStaff && <TeacherChatPage myStudents={myStudents} messages={messages} sendMessage={sendMessage} parents={parents} />}
@@ -696,12 +710,13 @@ function CameraModal({ onCapture, onClose }) {
 }
 
 // ─── ATTENDANCE PAGE ───────────────────────────────────────────────────────────
-function AttendancePage({ myStudents, todayRecord, markAttendance, addRemark, saveAttendance, savedDates, user }) {
+function AttendancePage({ myStudents, todayRecord, markAttendance, addRemark, saveAttendance, resetAttendance, savedDates, user }) {
   const [editRemark, setEditRemark] = useState(null);
   const [remarkText, setRemarkText] = useState("");
   const [remarkPhoto, setRemarkPhoto] = useState(null);
   const [photoSource, setPhotoSource] = useState(null);
   const [saveState, setSaveState] = useState("idle"); // idle | confirming | saving | saved
+  const [resetState, setResetState] = useState("idle"); // idle | confirming | resetting
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [showCamera, setShowCamera] = useState(false);
@@ -761,6 +776,26 @@ function AttendancePage({ myStudents, todayRecord, markAttendance, addRemark, sa
       saveAttendance(myStudents);
       setSaveState("saved");
     }, 900);
+  };
+
+  const handleResetClick = () => {
+    setConfirmPassword("");
+    setPasswordError("");
+    setResetState("confirming");
+  };
+
+  const confirmReset = () => {
+    if (confirmPassword !== user.password) {
+      setPasswordError("Incorrect password. Please try again.");
+      return;
+    }
+    setPasswordError("");
+    setResetState("resetting");
+    setTimeout(() => {
+      resetAttendance(myStudents);
+      setSaveState("idle");
+      setResetState("idle");
+    }, 700);
   };
 
   return (
@@ -824,6 +859,44 @@ function AttendancePage({ myStudents, todayRecord, markAttendance, addRemark, sa
         </div>
       )}
 
+      {/* Reset Confirm Modal */}
+      {resetState === "confirming" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: "#1e293b", borderRadius: 20, padding: 28, maxWidth: 340, width: "100%", border: "1px solid rgba(239,68,68,0.3)", boxShadow: "0 30px 60px rgba(0,0,0,0.6)" }}>
+            <div style={{ fontSize: 40, textAlign: "center", marginBottom: 14 }}>🔄</div>
+            <h3 style={{ textAlign: "center", margin: "0 0 8px", fontSize: 18, fontWeight: 800, color: "#fca5a5" }}>Reset Today's Attendance?</h3>
+            <p style={{ color: "#94a3b8", fontSize: 13, textAlign: "center", margin: "0 0 20px", lineHeight: 1.6 }}>
+              This will <strong style={{ color: "#f87171" }}>clear all {myStudents.length} attendance records</strong> for today and allow you to re-submit. Parents will not be re-notified until you save again.
+            </p>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Enter Your Password to Confirm Reset</label>
+              <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="Teacher password" onKeyDown={e => e.key === "Enter" && confirmReset()}
+                style={{ width: "100%", padding: "12px 14px", background: "rgba(255,255,255,0.07)", border: `1px solid ${passwordError ? "#ef4444" : "rgba(255,255,255,0.12)"}`, borderRadius: 10, color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+              {passwordError && <p style={{ color: "#f87171", fontSize: 12, margin: "6px 0 0" }}>{passwordError}</p>}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setResetState("idle")}
+                style={{ flex: 1, padding: "12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#94a3b8", cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
+                Cancel
+              </button>
+              <button onClick={confirmReset}
+                style={{ flex: 2, padding: "12px", background: "linear-gradient(135deg,#ef4444,#dc2626)", border: "none", borderRadius: 12, color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700 }}>
+                🔄 Yes, Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Resetting overlay */}
+      {resetState === "resetting" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 500, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+          <div style={{ width: 56, height: 56, border: "4px solid rgba(239,68,68,0.3)", borderTop: "4px solid #ef4444", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+          <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Resetting attendance...</div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
@@ -839,12 +912,16 @@ function AttendancePage({ myStudents, todayRecord, markAttendance, addRemark, sa
       {(isSavedToday || saveState === "saved") && (
         <div style={{ background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.35)", borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 20 }}>✅</span>
-          <div>
+          <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, color: "#86efac", fontSize: 14 }}>Attendance Saved & Sent</div>
             <div style={{ color: "#64748b", fontSize: 12 }}>
               Notified all {myStudents.length} parents at {savedDates[d]?.savedAt || now()} — {savedDates[d]?.presentCount ?? present} present, {savedDates[d]?.absentCount ?? absentCount} absent
             </div>
           </div>
+          <button onClick={handleResetClick}
+            style={{ flexShrink: 0, padding: "8px 14px", background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 10, color: "#fca5a5", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+            🔄 Reset
+          </button>
         </div>
       )}
 
