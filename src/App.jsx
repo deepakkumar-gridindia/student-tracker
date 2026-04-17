@@ -161,12 +161,12 @@ const MiniBar = ({ value, max = 100, color }) => (
 function AppFooter({ dark = true }) {
   return (
     <div style={{
-      textAlign: "center", padding: "6px 12px",
+      textAlign: "center", padding: "8px 12px",
       background: dark ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.06)",
       borderTop: dark ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(255,255,255,0.06)",
     }}>
       <span style={{
-        fontSize: 11, fontWeight: 600, letterSpacing: 0.4,
+        fontSize: 14, fontWeight: 700, letterSpacing: 0.5,
         background: "linear-gradient(90deg, #a78bfa, #38bdf8, #a78bfa)",
         WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
         backgroundSize: "200% auto", animation: "shimmer 3s linear infinite",
