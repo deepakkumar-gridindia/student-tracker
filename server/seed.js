@@ -39,6 +39,55 @@ async function seed() {
       id VARCHAR(50) PRIMARY KEY, name VARCHAR(200) NOT NULL,
       student_id VARCHAR(50), phone VARCHAR(20), password VARCHAR(200) NOT NULL)`);
 
+    // ── Dynamic / shared tables ────────────────────────────────────────────────
+    await query(`CREATE TABLE IF NOT EXISTS attendance (
+      student_id VARCHAR(50), date VARCHAR(20),
+      status VARCHAR(10), in_time VARCHAR(20), out_time VARCHAR(20),
+      remark TEXT, remark_photo TEXT,
+      PRIMARY KEY (student_id, date))`);
+
+    await query(`CREATE TABLE IF NOT EXISTS staff_attendance (
+      staff_id VARCHAR(50), date VARCHAR(20),
+      status VARCHAR(10), in_time VARCHAR(20), out_time VARCHAR(20),
+      PRIMARY KEY (staff_id, date))`);
+
+    await query(`CREATE TABLE IF NOT EXISTS saved_dates (
+      date VARCHAR(20) PRIMARY KEY, saved_at VARCHAR(20),
+      present_count INT DEFAULT 0, absent_count INT DEFAULT 0,
+      out_count INT DEFAULT 0, total INT DEFAULT 0)`);
+
+    await query(isPG
+      ? `CREATE TABLE IF NOT EXISTS notifications (
+          id SERIAL PRIMARY KEY, parent_id VARCHAR(50), student_id VARCHAR(50),
+          teacher_id VARCHAR(50), text TEXT, time VARCHAR(20),
+          type VARCHAR(50), date VARCHAR(20),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
+      : `CREATE TABLE IF NOT EXISTS notifications (
+          id INT AUTO_INCREMENT PRIMARY KEY, parent_id VARCHAR(50), student_id VARCHAR(50),
+          teacher_id VARCHAR(50), text TEXT, time VARCHAR(20),
+          type VARCHAR(50), date VARCHAR(20),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+
+    await query(isPG
+      ? `CREATE TABLE IF NOT EXISTS messages (
+          id SERIAL PRIMARY KEY, student_id VARCHAR(50), from_role VARCHAR(20),
+          text TEXT, time VARCHAR(20), date VARCHAR(20), image TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
+      : `CREATE TABLE IF NOT EXISTS messages (
+          id INT AUTO_INCREMENT PRIMARY KEY, student_id VARCHAR(50), from_role VARCHAR(20),
+          text TEXT, time VARCHAR(20), date VARCHAR(20), image TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+
+    await query(isPG
+      ? `CREATE TABLE IF NOT EXISTS class_images (
+          id SERIAL PRIMARY KEY, class_id VARCHAR(50), url TEXT, caption TEXT,
+          date VARCHAR(20), time VARCHAR(20), uploaded_by VARCHAR(200),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
+      : `CREATE TABLE IF NOT EXISTS class_images (
+          id INT AUTO_INCREMENT PRIMARY KEY, class_id VARCHAR(50), url TEXT, caption TEXT,
+          date VARCHAR(20), time VARCHAR(20), uploaded_by VARCHAR(200),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+
     // ── Seed rows (safe: skips if already exist) ───────────────────────────────
     const exec = (sql) => query(ins(sql));
 

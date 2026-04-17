@@ -169,37 +169,31 @@ export default function SchoolApp() {
   const [teachers, setTeachers] = useState(TEACHERS);
   const [classes, setClasses]   = useState(CLASSES);
   const [staff, setStaff]       = useState(STAFF_INIT);
-  const [attendance, setAttendance] = useState(() => ls("att", {}));
-  const [messages, setMessages] = useState(() => ls("msgs", {}));
-  const [notifications, setNotifications] = useState(() => ls("notifs", []));
-  const [classImages, setClassImages] = useState(() => ls("classImgs", []));
-  const [savedDates, setSavedDates] = useState(() => ls("savedDates", {}));
-  const [staffAttendance, setStaffAttendance] = useState(() => ls("staffAtt", {}));
+  // Dynamic shared data — lives in DB, not localStorage
+  const [attendance, setAttendance] = useState({});
+  const [messages, setMessages] = useState({});
+  const [notifications, setNotifications] = useState([]);
+  const [classImages, setClassImages] = useState([]);
+  const [savedDates, setSavedDates] = useState({});
+  const [staffAttendance, setStaffAttendance] = useState({});
 
-  // Write to localStorage whenever state changes
+  // Session persists across refresh (only non-shared data)
   useEffect(() => { localStorage.setItem("screen", JSON.stringify(screen)); }, [screen]);
   useEffect(() => { if (user) localStorage.setItem("user", JSON.stringify(user)); else localStorage.removeItem("user"); }, [user]);
-  useEffect(() => { localStorage.setItem("att", JSON.stringify(attendance)); }, [attendance]);
-  useEffect(() => { localStorage.setItem("msgs", JSON.stringify(messages)); }, [messages]);
-  useEffect(() => { localStorage.setItem("notifs", JSON.stringify(notifications)); }, [notifications]);
-  useEffect(() => { localStorage.setItem("classImgs", JSON.stringify(classImages)); }, [classImages]);
-  useEffect(() => { localStorage.setItem("savedDates", JSON.stringify(savedDates)); }, [savedDates]);
-  useEffect(() => { localStorage.setItem("staffAtt", JSON.stringify(staffAttendance)); }, [staffAttendance]);
 
-  // Sync live updates across browser tabs (teacher tab saves → parent tab updates instantly)
+  // Poll DB every 8 seconds — all clients stay in sync automatically
   useEffect(() => {
-    const handler = (e) => {
-      try {
-        if (e.key === "att")       setAttendance(JSON.parse(e.newValue || "{}"));
-        if (e.key === "notifs")    setNotifications(JSON.parse(e.newValue || "[]"));
-        if (e.key === "msgs")      setMessages(JSON.parse(e.newValue || "{}"));
-        if (e.key === "savedDates") setSavedDates(JSON.parse(e.newValue || "{}"));
-        if (e.key === "classImgs") setClassImages(JSON.parse(e.newValue || "[]"));
-        if (e.key === "staffAtt")  setStaffAttendance(JSON.parse(e.newValue || "{}"));
-      } catch {}
-    };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
+    const load = () => Promise.all([
+      fetch("/api/attendance").then(r => r.json()).then(setAttendance).catch(() => {}),
+      fetch("/api/notifications").then(r => r.json()).then(setNotifications).catch(() => {}),
+      fetch("/api/messages").then(r => r.json()).then(setMessages).catch(() => {}),
+      fetch("/api/class-images").then(r => r.json()).then(setClassImages).catch(() => {}),
+      fetch("/api/saved-dates").then(r => r.json()).then(setSavedDates).catch(() => {}),
+      fetch("/api/staff-attendance").then(r => r.json()).then(setStaffAttendance).catch(() => {}),
+    ]);
+    load();
+    const id = setInterval(load, 8000);
+    return () => clearInterval(id);
   }, []);
 
   // Fetch reference data from MySQL via API (falls back to hardcoded if unavailable)
@@ -233,80 +227,75 @@ export default function SchoolApp() {
   const handleLogin = (role, data) => { setUser({ role, ...data }); setScreen(role); };
   const handleLogout = () => { setUser(null); setScreen("login"); localStorage.removeItem("user"); localStorage.setItem("screen", JSON.stringify("login")); };
 
-  const markAttendance = (studentId, field, value) => {
-    const d = today();
-    setAttendance(prev => {
-      const day = prev[d] || {};
-      const rec = day[studentId] || { status: "present", inTime: null, outTime: null, remark: "" };
-      const updated = { ...rec, [field]: value };
-      // Auto-set inTime when marked present
-      if (field === "status" && value === "in" && !rec.inTime) updated.inTime = now();
-      if (field === "status" && value === "out") updated.outTime = now();
-      const newState = { ...prev, [d]: { ...day, [studentId]: updated } };
-      // Fire notification
-      if (field === "status") {
-        const st = students.find(s => s.id === studentId);
-        const notif = { parentId: st.parentId, studentId, text: `${st.name} marked ${value === "in" ? "ARRIVED" : value === "out" ? "DEPARTED" : "ABSENT"} at ${now()} on ${d}`, time: now() };
-        setNotifications(n => [notif, ...n.slice(0, 49)]);
-      }
-      return newState;
-    });
-  };
+  const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => {});
 
-  const sendMessage = (studentId, from, text, image = null) => {
-    const msg = { from, text, time: now(), image, date: today() };
-    setMessages(prev => ({ ...prev, [studentId]: [...(prev[studentId] || []), msg] }));
-    if (from === "parent") {
+  const markAttendance = (studentId, field, value) => {
+    const d = today(); const t = now();
+    const rec = { ...(attendance[d]?.[studentId] || { status: null, inTime: null, outTime: null, remark: "", remarkPhoto: null }), [field]: value };
+    if (field === "status" && value === "in"  && !attendance[d]?.[studentId]?.inTime) rec.inTime = t;
+    if (field === "status" && value === "out") rec.outTime = t;
+    setAttendance(prev => ({ ...prev, [d]: { ...(prev[d] || {}), [studentId]: rec } }));
+    post("/api/attendance", { studentId, date: d, status: rec.status, inTime: rec.inTime, outTime: rec.outTime, remark: rec.remark, remarkPhoto: rec.remarkPhoto });
+    if (field === "status") {
       const st = students.find(s => s.id === studentId);
-      setNotifications(n => [{ teacherId: CLASSES.find(c => c.id === st.classId)?.teacherId, studentId, text: `Parent message for ${st.name}: "${text.slice(0, 40)}..."`, time: now(), type: "parentMsg" }, ...n.slice(0, 49)]);
+      if (st) {
+        const notif = { parentId: st.parentId, studentId, text: `${st.name} marked ${value === "in" ? "ARRIVED" : value === "out" ? "DEPARTED" : "ABSENT"} at ${t} on ${d}`, time: t, type: "attendance", date: d };
+        setNotifications(n => [notif, ...n]);
+        post("/api/notifications", [notif]);
+      }
     }
   };
 
   const addRemark = (studentId, remark, remarkPhoto = null) => {
     const d = today();
-    setAttendance(prev => {
-      const day = prev[d] || {};
-      const rec = day[studentId] || {};
-      return { ...prev, [d]: { ...day, [studentId]: { ...rec, remark, remarkPhoto } } };
-    });
+    const rec = { ...(attendance[d]?.[studentId] || {}), remark, remarkPhoto };
+    setAttendance(prev => ({ ...prev, [d]: { ...(prev[d] || {}), [studentId]: rec } }));
+    post("/api/attendance", { studentId, date: d, status: rec.status, inTime: rec.inTime, outTime: rec.outTime, remark, remarkPhoto });
   };
 
   const saveAttendance = (classStudents) => {
-    const d = today();
+    const d = today(); const savedAt = now();
     const dayRec = attendance[d] || {};
     const presentCount = classStudents.filter(s => dayRec[s.id]?.status === "in").length;
     const absentCount  = classStudents.filter(s => dayRec[s.id]?.status === "absent").length;
     const outCount     = classStudents.filter(s => dayRec[s.id]?.status === "out").length;
-    const savedAt = now();
-    // Record save
     setSavedDates(prev => ({ ...prev, [d]: { savedAt, presentCount, absentCount, outCount, total: classStudents.length } }));
-    // Fire one notification per parent
+    post("/api/saved-dates", { date: d, savedAt, presentCount, absentCount, outCount, total: classStudents.length });
     const newNotifs = classStudents.map(s => {
       const rec = dayRec[s.id];
       const statusLabel = rec?.status === "in" ? "✅ Present" : rec?.status === "absent" ? "❌ Absent" : rec?.status === "out" ? "🔴 Departed" : "⏳ Not Marked";
-      return {
-        parentId: s.parentId,
-        studentId: s.id,
-        text: `Attendance saved for ${d}: ${s.name} — ${statusLabel}${rec?.inTime ? ` (In: ${rec.inTime})` : ""}${rec?.outTime ? `, Out: ${rec.outTime}` : ""}${rec?.remark ? ` | Note: ${rec.remark}` : ""}`,
-        time: savedAt,
-        type: "attendanceSave",
-        date: d,
-      };
+      return { parentId: s.parentId, studentId: s.id, text: `Attendance saved for ${d}: ${s.name} — ${statusLabel}${rec?.inTime ? ` (In: ${rec.inTime})` : ""}${rec?.outTime ? `, Out: ${rec.outTime}` : ""}${rec?.remark ? ` | Note: ${rec.remark}` : ""}`, time: savedAt, type: "attendanceSave", date: d };
     });
-    setNotifications(prev => [...newNotifs, ...prev.slice(0, 49)]);
+    setNotifications(prev => [...newNotifs, ...prev]);
+    post("/api/notifications", newNotifs);
+  };
+
+  const sendMessage = (studentId, from, text, image = null) => {
+    const t = now(); const d = today();
+    const msg = { from, text, time: t, image, date: d };
+    setMessages(prev => ({ ...prev, [studentId]: [...(prev[studentId] || []), msg] }));
+    post("/api/messages", { studentId, from, text, time: t, image, date: d });
+    if (from === "parent") {
+      const st = students.find(s => s.id === studentId);
+      const notif = { teacherId: classes.find(c => c.id === st?.classId)?.teacherId, studentId, text: `Parent message for ${st?.name}: "${text.slice(0, 40)}..."`, time: t, type: "parentMsg" };
+      setNotifications(n => [notif, ...n]);
+      post("/api/notifications", [notif]);
+    }
   };
 
   const markStaffAttendance = (staffId, status) => {
-    const d = today();
-    const t = now();
-    setStaffAttendance(prev => {
-      const day = prev[d] || {};
-      const rec = day[staffId] || {};
-      const updated = { ...rec, status };
-      if (status === "in" && !rec.inTime) updated.inTime = t;
-      if (status === "out") updated.outTime = t;
-      return { ...prev, [d]: { ...day, [staffId]: updated } };
-    });
+    const d = today(); const t = now();
+    const rec = { ...(staffAttendance[d]?.[staffId] || {}), status };
+    if (status === "in"  && !staffAttendance[d]?.[staffId]?.inTime) rec.inTime = t;
+    if (status === "out") rec.outTime = t;
+    setStaffAttendance(prev => ({ ...prev, [d]: { ...(prev[d] || {}), [staffId]: rec } }));
+    post("/api/staff-attendance", { staffId, date: d, status, inTime: rec.inTime || null, outTime: rec.outTime || null });
+  };
+
+  const addClassImage = (img) => {
+    post("/api/class-images", img).then(r => r?.json()).then(json => {
+      if (json?.id) setClassImages(prev => [{ ...img, id: json.id }, ...prev]);
+    }).catch(() => setClassImages(prev => [img, ...prev]));
   };
 
   const todayStaffRecord = (staffId) => staffAttendance[today()]?.[staffId] || null;
@@ -319,7 +308,7 @@ export default function SchoolApp() {
       parents={parents} messages={messages} notifications={notifications} setNotifications={setNotifications}
       markAttendance={markAttendance} addRemark={addRemark} todayRecord={todayRecord}
       saveAttendance={saveAttendance} savedDates={savedDates}
-      sendMessage={sendMessage} classImages={classImages} setClassImages={setClassImages}
+      sendMessage={sendMessage} classImages={classImages} setClassImages={setClassImages} addClassImage={addClassImage}
       staffAttendance={staffAttendance} markStaffAttendance={markStaffAttendance} todayStaffRecord={todayStaffRecord}
       onLogout={handleLogout} />
   );
@@ -1359,13 +1348,13 @@ function TeacherChatPage({ myStudents, messages, sendMessage, parents }) {
 }
 
 // ─── GALLERY PAGE ─────────────────────────────────────────────────────────────
-function GalleryPage({ classImages, setClassImages, user, myClass }) {
+function GalleryPage({ classImages, setClassImages, addClassImage, user, myClass }) {
   const [caption, setCaption] = useState("");
   const [preview, setPreview] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
-  const [editIdx, setEditIdx] = useState(null);
+  const [editId, setEditId] = useState(null);
   const [editCaption, setEditCaption] = useState("");
-  const [lightbox, setLightbox] = useState(null);
+  const [lightbox, setLightbox] = useState(null); // img object
   const fileRef = useRef(null);
 
   const myImages = classImages.filter(img => img.classId === user.classId);
@@ -1381,27 +1370,29 @@ function GalleryPage({ classImages, setClassImages, user, myClass }) {
 
   const upload = () => {
     if (!preview) return;
-    setClassImages(imgs => [{ url: preview, caption, time: now(), date: today(), uploadedBy: user.name, classId: user.classId }, ...imgs]);
+    addClassImage({ url: preview, caption, time: now(), date: today(), uploadedBy: user.name, classId: user.classId });
     setPreview(null);
     setCaption("");
   };
 
-  const saveEditCaption = (globalIdx) => {
-    setClassImages(imgs => imgs.map((img, i) => i === globalIdx ? { ...img, caption: editCaption } : img));
-    setEditIdx(null);
+  const saveEditCaption = (img) => {
+    setClassImages(imgs => imgs.map(i => i.id === img.id ? { ...i, caption: editCaption } : i));
+    fetch(`/api/class-images/${img.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ caption: editCaption }) }).catch(() => {});
+    setEditId(null);
+    if (lightbox?.id === img.id) setLightbox({ ...lightbox, caption: editCaption });
   };
 
-  const deleteImage = (globalIdx) => {
-    setClassImages(imgs => imgs.filter((_, i) => i !== globalIdx));
+  const deleteImage = (img) => {
+    setClassImages(imgs => imgs.filter(i => i.id !== img.id));
+    fetch(`/api/class-images/${img.id}`, { method: "DELETE" }).catch(() => {});
     setLightbox(null);
   };
 
   // Group by date
   const byDate = {};
-  myImages.forEach((img, localIdx) => {
-    const globalIdx = classImages.indexOf(img);
+  myImages.forEach(img => {
     if (!byDate[img.date]) byDate[img.date] = [];
-    byDate[img.date].push({ ...img, globalIdx });
+    byDate[img.date].push(img);
   });
   const sortedDates = Object.keys(byDate).sort((a, b) => {
     const parse = d => { const [dd, mm, yyyy] = d.split("/"); return new Date(yyyy, mm - 1, dd); };
@@ -1418,36 +1409,33 @@ function GalleryPage({ classImages, setClassImages, user, myClass }) {
       )}
 
       {/* Lightbox */}
-      {lightbox !== null && (() => {
-        const img = classImages[lightbox];
-        return (
-          <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.93)", zIndex: 600, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
-            <img src={img.url} alt={img.caption} onClick={e => e.stopPropagation()} style={{ maxWidth: "100%", maxHeight: "65vh", borderRadius: 14, objectFit: "contain" }} />
-            <div onClick={e => e.stopPropagation()} style={{ marginTop: 14, width: "100%", maxWidth: 480 }}>
-              {editIdx === lightbox ? (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input value={editCaption} onChange={e => setEditCaption(e.target.value)} autoFocus
-                    style={{ flex: 1, padding: "9px 12px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 9, color: "#fff", fontSize: 13, outline: "none" }} />
-                  <button onClick={() => saveEditCaption(lightbox)} style={{ padding: "9px 14px", background: "#6366f1", border: "none", borderRadius: 9, color: "#fff", cursor: "pointer", fontWeight: 700 }}>Save</button>
-                  <button onClick={() => setEditIdx(null)} style={{ padding: "9px 12px", background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 9, color: "#94a3b8", cursor: "pointer" }}>✕</button>
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.93)", zIndex: 600, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <img src={lightbox.url} alt={lightbox.caption} onClick={e => e.stopPropagation()} style={{ maxWidth: "100%", maxHeight: "65vh", borderRadius: 14, objectFit: "contain" }} />
+          <div onClick={e => e.stopPropagation()} style={{ marginTop: 14, width: "100%", maxWidth: 480 }}>
+            {editId === lightbox.id ? (
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={editCaption} onChange={e => setEditCaption(e.target.value)} autoFocus
+                  style={{ flex: 1, padding: "9px 12px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 9, color: "#fff", fontSize: 13, outline: "none" }} />
+                <button onClick={() => saveEditCaption(lightbox)} style={{ padding: "9px 14px", background: "#6366f1", border: "none", borderRadius: 9, color: "#fff", cursor: "pointer", fontWeight: 700 }}>Save</button>
+                <button onClick={() => setEditId(null)} style={{ padding: "9px 12px", background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 9, color: "#94a3b8", cursor: "pointer" }}>✕</button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                <div>
+                  {lightbox.caption ? <div style={{ color: "#e2e8f0", fontSize: 14, marginBottom: 4 }}>{lightbox.caption}</div> : <div style={{ color: "#475569", fontSize: 13, fontStyle: "italic" }}>No remark added</div>}
+                  <div style={{ color: "#64748b", fontSize: 11 }}>{lightbox.uploadedBy} · {lightbox.date} · {lightbox.time}</div>
                 </div>
-              ) : (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                  <div>
-                    {img.caption ? <div style={{ color: "#e2e8f0", fontSize: 14, marginBottom: 4 }}>{img.caption}</div> : <div style={{ color: "#475569", fontSize: 13, fontStyle: "italic" }}>No remark added</div>}
-                    <div style={{ color: "#64748b", fontSize: 11 }}>{img.uploadedBy} · {img.date} · {img.time}</div>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button onClick={() => { setEditIdx(lightbox); setEditCaption(img.caption || ""); }} style={{ padding: "6px 12px", background: "rgba(99,102,241,0.25)", border: "1px solid rgba(99,102,241,0.4)", borderRadius: 8, color: "#a5b4fc", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit</button>
-                    <button onClick={() => deleteImage(lightbox)} style={{ padding: "6px 10px", background: "rgba(239,68,68,0.2)", border: "none", borderRadius: 8, color: "#fca5a5", cursor: "pointer", fontSize: 12 }}>🗑️</button>
-                  </div>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button onClick={() => { setEditId(lightbox.id); setEditCaption(lightbox.caption || ""); }} style={{ padding: "6px 12px", background: "rgba(99,102,241,0.25)", border: "1px solid rgba(99,102,241,0.4)", borderRadius: 8, color: "#a5b4fc", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>✏️ Edit</button>
+                  <button onClick={() => deleteImage(lightbox)} style={{ padding: "6px 10px", background: "rgba(239,68,68,0.2)", border: "none", borderRadius: 8, color: "#fca5a5", cursor: "pointer", fontSize: 12 }}>🗑️</button>
                 </div>
-              )}
-            </div>
-            <button onClick={() => setLightbox(null)} style={{ marginTop: 18, padding: "8px 24px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>Close</button>
+              </div>
+            )}
           </div>
-        );
-      })()}
+          <button onClick={() => setLightbox(null)} style={{ marginTop: 18, padding: "8px 24px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10, color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>Close</button>
+        </div>
+      )}
 
       <h2 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 800 }}>Class Gallery</h2>
       <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 20px" }}>{myClass?.name} · {myImages.length} photo{myImages.length !== 1 ? "s" : ""} shared with parents</p>
@@ -1505,7 +1493,7 @@ function GalleryPage({ classImages, setClassImages, user, myClass }) {
               {/* Photo grid */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 {byDate[date].map(img => (
-                  <div key={img.globalIdx} onClick={() => { setLightbox(img.globalIdx); setEditIdx(null); }}
+                  <div key={img.id} onClick={() => { setLightbox(img); setEditId(null); }}
                     style={{ background: "rgba(255,255,255,0.04)", borderRadius: 12, overflow: "hidden", cursor: "pointer", border: "1px solid rgba(255,255,255,0.07)", transition: "border-color .2s" }}>
                     <div style={{ position: "relative" }}>
                       <img src={img.url} alt={img.caption} style={{ width: "100%", height: 130, objectFit: "cover", display: "block" }} />

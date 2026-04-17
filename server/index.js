@@ -1,7 +1,7 @@
 const express = require("express");
 const cors    = require("cors");
 const path    = require("path");
-const { query } = require("./db");
+const { query, insertGetId } = require("./db");
 const seed    = require("./seed");
 require("dotenv").config();
 
@@ -130,6 +130,159 @@ crud("classes", "classes", mapC,
   b => [b.id, b.name, b.grade||null, b.section||null, b.schoolId, b.teacherId||null],
   b => [b.name, b.grade||null, b.section||null, b.schoolId, b.teacherId||null]
 );
+
+// ─── ATTENDANCE ───────────────────────────────────────────────────────────────
+app.get("/api/attendance", async (_, res) => {
+  try {
+    const rows = await query("SELECT * FROM attendance");
+    const out = {};
+    rows.forEach(r => {
+      if (!out[r.date]) out[r.date] = {};
+      out[r.date][r.student_id] = { status: r.status, inTime: r.in_time, outTime: r.out_time, remark: r.remark, remarkPhoto: r.remark_photo };
+    });
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/attendance", async (req, res) => {
+  const { studentId, date, status, inTime, outTime, remark, remarkPhoto } = req.body;
+  try {
+    const ex = await query("SELECT 1 FROM attendance WHERE student_id=? AND date=?", [studentId, date]);
+    if (ex.length) {
+      await query("UPDATE attendance SET status=?,in_time=?,out_time=?,remark=?,remark_photo=? WHERE student_id=? AND date=?",
+        [status||null, inTime||null, outTime||null, remark||null, remarkPhoto||null, studentId, date]);
+    } else {
+      await query("INSERT INTO attendance (student_id,date,status,in_time,out_time,remark,remark_photo) VALUES (?,?,?,?,?,?,?)",
+        [studentId, date, status||null, inTime||null, outTime||null, remark||null, remarkPhoto||null]);
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ─── STAFF ATTENDANCE ─────────────────────────────────────────────────────────
+app.get("/api/staff-attendance", async (_, res) => {
+  try {
+    const rows = await query("SELECT * FROM staff_attendance");
+    const out = {};
+    rows.forEach(r => {
+      if (!out[r.date]) out[r.date] = {};
+      out[r.date][r.staff_id] = { status: r.status, inTime: r.in_time, outTime: r.out_time };
+    });
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/staff-attendance", async (req, res) => {
+  const { staffId, date, status, inTime, outTime } = req.body;
+  try {
+    const ex = await query("SELECT 1 FROM staff_attendance WHERE staff_id=? AND date=?", [staffId, date]);
+    if (ex.length) {
+      await query("UPDATE staff_attendance SET status=?,in_time=?,out_time=? WHERE staff_id=? AND date=?",
+        [status, inTime||null, outTime||null, staffId, date]);
+    } else {
+      await query("INSERT INTO staff_attendance (staff_id,date,status,in_time,out_time) VALUES (?,?,?,?,?)",
+        [staffId, date, status, inTime||null, outTime||null]);
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ─── SAVED DATES ──────────────────────────────────────────────────────────────
+app.get("/api/saved-dates", async (_, res) => {
+  try {
+    const rows = await query("SELECT * FROM saved_dates");
+    const out = {};
+    rows.forEach(r => { out[r.date] = { savedAt: r.saved_at, presentCount: r.present_count, absentCount: r.absent_count, outCount: r.out_count, total: r.total }; });
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/saved-dates", async (req, res) => {
+  const { date, savedAt, presentCount, absentCount, outCount, total } = req.body;
+  try {
+    const ex = await query("SELECT 1 FROM saved_dates WHERE date=?", [date]);
+    if (ex.length) {
+      await query("UPDATE saved_dates SET saved_at=?,present_count=?,absent_count=?,out_count=?,total=? WHERE date=?",
+        [savedAt, presentCount, absentCount, outCount, total, date]);
+    } else {
+      await query("INSERT INTO saved_dates (date,saved_at,present_count,absent_count,out_count,total) VALUES (?,?,?,?,?,?)",
+        [date, savedAt, presentCount, absentCount, outCount, total]);
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+app.get("/api/notifications", async (_, res) => {
+  try {
+    const rows = await query("SELECT * FROM notifications ORDER BY created_at DESC LIMIT 300");
+    res.json(rows.map(r => ({ parentId: r.parent_id, studentId: r.student_id, teacherId: r.teacher_id, text: r.text, time: r.time, type: r.type, date: r.date })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/notifications", async (req, res) => {
+  const list = Array.isArray(req.body) ? req.body : [req.body];
+  try {
+    for (const n of list) {
+      await query("INSERT INTO notifications (parent_id,student_id,teacher_id,text,time,type,date) VALUES (?,?,?,?,?,?,?)",
+        [n.parentId||null, n.studentId||null, n.teacherId||null, n.text, n.time, n.type||null, n.date||null]);
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ─── MESSAGES ─────────────────────────────────────────────────────────────────
+app.get("/api/messages", async (_, res) => {
+  try {
+    const rows = await query("SELECT * FROM messages ORDER BY created_at ASC");
+    const out = {};
+    rows.forEach(r => {
+      if (!out[r.student_id]) out[r.student_id] = [];
+      out[r.student_id].push({ from: r.from_role, text: r.text, time: r.time, image: r.image, date: r.date });
+    });
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/messages", async (req, res) => {
+  const { studentId, from, text, time, image, date } = req.body;
+  try {
+    await query("INSERT INTO messages (student_id,from_role,text,time,image,date) VALUES (?,?,?,?,?,?)",
+      [studentId, from, text, time, image||null, date]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ─── CLASS IMAGES ─────────────────────────────────────────────────────────────
+app.get("/api/class-images", async (_, res) => {
+  try {
+    const rows = await query("SELECT id,class_id,url,caption,date,time,uploaded_by FROM class_images ORDER BY created_at DESC");
+    res.json(rows.map(r => ({ id: r.id, classId: r.class_id, url: r.url, caption: r.caption, date: r.date, time: r.time, uploadedBy: r.uploaded_by })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/class-images", async (req, res) => {
+  const { classId, url, caption, date, time, uploadedBy } = req.body;
+  try {
+    const id = await insertGetId("INSERT INTO class_images (class_id,url,caption,date,time,uploaded_by) VALUES (?,?,?,?,?,?)",
+      [classId, url, caption||null, date, time, uploadedBy]);
+    res.json({ success: true, id });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.patch("/api/class-images/:id", async (req, res) => {
+  try {
+    await query("UPDATE class_images SET caption=? WHERE id=?", [req.body.caption, req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+app.delete("/api/class-images/:id", async (req, res) => {
+  try {
+    await query("DELETE FROM class_images WHERE id=?", [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (_, res) => res.json({ ok: true }));
